@@ -3,6 +3,21 @@ import { getSettingByKey, setSetting } from '@/lib/repositories/settingsReposito
 import { clearAllCache } from '@/lib/services/cacheService';
 
 /**
+ * Setting keys that don't affect public-page rendering and therefore should
+ * NOT trigger a cache nuke when updated.
+ *
+ * - `draft_css`: builder-only preview CSS. Public pages serve `published_css`.
+ *   Saved on every edit, so invalidating here would purge every page on every
+ *   keystroke and undo selective invalidation entirely.
+ * - `email`: SMTP credentials for form submission backend. Not consumed by
+ *   public page renders.
+ *
+ * All other keys (redirects, favicon_url, ga_measurement_id, published_css,
+ * color variables, etc.) are read by public pages and DO require invalidation.
+ */
+const DRAFT_ONLY_SETTING_KEYS = new Set(['draft_css', 'email']);
+
+/**
  * GET /ycode/api/settings/[key]
  *
  * Get a setting value by key
@@ -55,7 +70,11 @@ export async function PUT(
 
     await setSetting(key, value);
 
-    await clearAllCache();
+    // Skip cache invalidation for draft/internal settings so builder
+    // autosaves don't purge the public CDN cache on every edit.
+    if (!DRAFT_ONLY_SETTING_KEYS.has(key)) {
+      await clearAllCache();
+    }
 
     return NextResponse.json({
       data: { key, value },

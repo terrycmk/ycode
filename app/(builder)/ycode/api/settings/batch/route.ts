@@ -3,6 +3,12 @@ import { setSettings } from '@/lib/repositories/settingsRepository';
 import { clearAllCache } from '@/lib/services/cacheService';
 
 /**
+ * Setting keys that don't affect public-page rendering. Mirrors the list in
+ * /ycode/api/settings/[key]/route.ts — keep them in sync.
+ */
+const DRAFT_ONLY_SETTING_KEYS = new Set(['draft_css', 'email']);
+
+/**
  * PUT /ycode/api/settings/batch
  *
  * Update multiple settings at once.
@@ -23,7 +29,14 @@ export async function PUT(request: NextRequest) {
 
     const count = await setSettings(settings);
 
-    await clearAllCache();
+    // Only invalidate caches if any of the updated keys actually affect
+    // public page rendering. Skips builder-only autosaves.
+    const touchesPublicKeys = Object.keys(settings).some(
+      (key) => !DRAFT_ONLY_SETTING_KEYS.has(key)
+    );
+    if (touchesPublicKeys) {
+      await clearAllCache();
+    }
 
     return NextResponse.json({
       data: { count },
