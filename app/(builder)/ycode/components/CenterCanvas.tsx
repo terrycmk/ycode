@@ -2544,6 +2544,11 @@ const CenterCanvas = React.memo(function CenterCanvas({
               position: 'relative',
               minWidth: '100%',
               minHeight: '100%',
+              // When editing a component, center the canvas inside the scroll area.
+              // Page editing keeps default block flow so absolute overlays anchor at the top.
+              ...(editingComponentId
+                ? { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }
+                : null),
             }}
           >
               <div
