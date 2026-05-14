@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+import ComponentVariableLabel, { VARIABLE_TYPE_ICONS } from './ComponentVariableLabel';
 import ComponentVariableOverrides from './ComponentVariableOverrides';
 import ComponentVariablesDialog from './ComponentVariablesDialog';
 import RichTextEditor from './RichTextEditor';
@@ -31,6 +32,7 @@ import { useComponentsStore } from '@/stores/useComponentsStore';
 import { usePagesStore } from '@/stores/usePagesStore';
 import { useEditComponent } from '@/hooks/use-edit-component';
 import { detachSpecificLayerFromComponent } from '@/lib/component-utils';
+import { collectVariantVariableOptions } from '@/lib/component-variant-utils';
 import { EMPTY_OVERRIDES } from '@/lib/variable-utils';
 
 import type { Layer, ComponentVariable, Component, Collection, CollectionField } from '@/types';
@@ -73,10 +75,12 @@ export default function ComponentInstanceSidebar({
   const addAudioVariable = useComponentsStore((state) => state.addAudioVariable);
   const addVideoVariable = useComponentsStore((state) => state.addVideoVariable);
   const addIconVariable = useComponentsStore((state) => state.addIconVariable);
+  const addVariantVariable = useComponentsStore((state) => state.addVariantVariable);
   const updateTextVariable = useComponentsStore((state) => state.updateTextVariable);
 
   const setDraftLayers = usePagesStore((state) => state.setDraftLayers);
   const pages = usePagesStore((state) => state.pages);
+  const allComponents = useComponentsStore((state) => state.components);
 
   const [variablesOpen, setVariablesOpen] = useState(true);
   const [variablesDialogOpen, setVariablesDialogOpen] = useState(false);
@@ -89,7 +93,7 @@ export default function ComponentInstanceSidebar({
 
   const allVariables = component.variables || [];
   const overrides = selectedLayer.componentOverrides;
-  const hasOverrides = ['text', 'rich_text', 'image', 'link', 'audio', 'video', 'icon']
+  const hasOverrides = ['text', 'rich_text', 'image', 'link', 'audio', 'video', 'icon', 'variant']
     .some(cat => Object.keys(overrides?.[cat as keyof typeof overrides] || {}).length > 0);
 
   const handleEditMasterComponent = useCallback(async () => {
@@ -112,6 +116,34 @@ export default function ComponentInstanceSidebar({
       },
     });
   }, [selectedLayerId, onLayerUpdate, overrides]);
+
+  // Variant-variable link is a top-level layer field (componentVariantVariableId)
+  // — not a `variableLinks` entry — because variant lives on the layer, not in
+  // a child variable. See plan: "linking_storage = new_field".
+  const handleLinkVariantVariable = useCallback((parentVariableId: string) => {
+    onLayerUpdate(selectedLayerId, { componentVariantVariableId: parentVariableId });
+  }, [selectedLayerId, onLayerUpdate]);
+
+  const handleUnlinkVariantVariable = useCallback(() => {
+    onLayerUpdate(selectedLayerId, { componentVariantVariableId: undefined });
+  }, [selectedLayerId, onLayerUpdate]);
+
+  const handleCreateVariantVariable = useCallback(async () => {
+    if (!editingComponentId) return;
+    const newId = await addVariantVariable(editingComponentId, 'Variant');
+    if (!newId) return;
+
+    // Seed the new variable's default with the layer's currently selected
+    // variant so reusing the parent without overriding still renders the same
+    // variant the user picked while building the parent.
+    const currentVariantId = selectedLayer.componentVariantId
+      ?? component.variants?.[0]?.id;
+    if (currentVariantId) {
+      await updateTextVariable(editingComponentId, newId, { default_value: { variant_id: currentVariantId } });
+    }
+    handleLinkVariantVariable(newId);
+    openVariablesDialog(newId);
+  }, [editingComponentId, addVariantVariable, selectedLayer.componentVariantId, component.variants, updateTextVariable, handleLinkVariantVariable, openVariablesDialog]);
 
   const handleUnlinkOverrideVariable = useCallback((childVariableId: string) => {
     const links = { ...(overrides?.variableLinks ?? {}) };
@@ -241,28 +273,80 @@ export default function ComponentInstanceSidebar({
               )}
             </div>
 
-            {/* Variant selector — only meaningful when the component has more
-                than one variant. Variables are shared across variants, so
+            {/* Variant selector. Always rendered when the component has any
+                variants so users editing a parent can link this layer's
+                variant to a parent variable even if the child only ships with
+                one variant today. Variables are shared across variants, so
                 changing the variant only switches the layer tree. */}
-            {component.variants && component.variants.length > 1 && (
-              <Select
-                value={selectedLayer.componentVariantId ?? component.variants[0].id}
-                onValueChange={(value) => {
-                  onLayerUpdate(selectedLayerId, { componentVariantId: value });
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Variant" />
-                </SelectTrigger>
-                <SelectContent>
-                  {component.variants.map((variant) => (
-                    <SelectItem key={variant.id} value={variant.id}>
-                      {variant.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
+            {component.variants && component.variants.length > 0 && (() => {
+              const linkedParentVariantVar = editingComponent?.variables?.find(
+                v => v.id === selectedLayer.componentVariantVariableId && (v.type || 'text') === 'variant'
+              );
+              const variantParentVariables = parentVariables.filter(v => (v.type || 'text') === 'variant');
+
+              return (
+                <div className="grid grid-cols-3 items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <ComponentVariableLabel
+                      label="Variant"
+                      isEditingComponent={!!editingComponentId}
+                      variables={variantParentVariables}
+                      linkedVariableId={linkedParentVariantVar?.id}
+                      onLinkVariable={handleLinkVariantVariable}
+                      onManageVariables={() => openVariablesDialog(linkedParentVariantVar?.id)}
+                      onCreateVariable={editingComponentId ? handleCreateVariantVariable : undefined}
+                    />
+                  </div>
+
+                  <div className="col-span-2 *:w-full">
+                    {linkedParentVariantVar ? (
+                      <Button
+                        asChild
+                        variant="purple"
+                        className="justify-between! w-full"
+                        onClick={() => openVariablesDialog(linkedParentVariantVar.id)}
+                      >
+                        <div>
+                          <span className="flex items-center gap-1.5">
+                            <Icon
+                              name={VARIABLE_TYPE_ICONS['variant']}
+                              className="size-3 opacity-60"
+                            />
+                            {linkedParentVariantVar.name}
+                          </span>
+                          <Button
+                            className="size-4! p-0!"
+                            variant="outline"
+                            onClick={(e) => { e.stopPropagation(); handleUnlinkVariantVariable(); }}
+                          >
+                            <Icon name="x" className="size-2" />
+                          </Button>
+                        </div>
+                      </Button>
+                    ) : (
+                      <Select
+                        value={selectedLayer.componentVariantId ?? component.variants[0].id}
+                        onValueChange={(value) => {
+                          onLayerUpdate(selectedLayerId, { componentVariantId: value });
+                        }}
+                        disabled={component.variants.length <= 1}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Variant" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {component.variants.map((variant) => (
+                            <SelectItem key={variant.id} value={variant.id}>
+                              {variant.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             <Button
               size="sm"
@@ -293,6 +377,7 @@ export default function ComponentInstanceSidebar({
               onUnlinkOverrideVariable={handleUnlinkOverrideVariable}
               onCreateOverrideVariable={handleCreateOverrideVariable}
               onManageVariables={(varId) => openVariablesDialog(varId)}
+              getVariantVariableOptions={(variableId) => collectVariantVariableOptions(component, allComponents, variableId)}
               renderTextOverride={(variable, value, onChange, onClear) =>
                 variable.type === 'rich_text' ? (
                   <ExpandableRichTextEditor

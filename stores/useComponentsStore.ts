@@ -194,6 +194,10 @@ interface ComponentsActions {
   addAudioVariable: (componentId: string, name: string) => Promise<string | null>;
   addVideoVariable: (componentId: string, name: string) => Promise<string | null>;
   addIconVariable: (componentId: string, name: string) => Promise<string | null>;
+  /** Add a `'variant'` typed variable. Variant variables expose a parent
+   *  variable that drives the `componentVariantId` of any nested-instance layer
+   *  whose `componentVariantVariableId` points at it. */
+  addVariantVariable: (componentId: string, name: string) => Promise<string | null>;
   updateTextVariable: (componentId: string, variableId: string, updates: { name?: string; placeholder?: string; default_value?: any }) => Promise<void>;
   reorderVariables: (componentId: string, orderedIds: string[]) => Promise<void>;
   deleteTextVariable: (componentId: string, variableId: string) => Promise<void>;
@@ -1089,6 +1093,40 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
       }
     },
 
+    addVariantVariable: async (componentId, name) => {
+      const component = get().getComponentById(componentId);
+      if (!component) return null;
+
+      const variableId = generateId('cpv');
+      const newVariable = { id: variableId, name, type: 'variant' as const };
+      const updatedVariables = [...(component.variables || []), newVariable];
+
+      try {
+        const response = await fetch(`/ycode/api/components/${componentId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ variables: updatedVariables }),
+        });
+
+        const result = await response.json();
+        if (result.error) {
+          console.error('Failed to add variant variable:', result.error);
+          return null;
+        }
+
+        set((state) => ({
+          components: state.components.map((c) =>
+            c.id === componentId ? { ...c, variables: updatedVariables } : c
+          ),
+        }));
+
+        return variableId;
+      } catch (error) {
+        console.error('Failed to add variant variable:', error);
+        return null;
+      }
+    },
+
     // Update a text variable's name and/or default value
     updateTextVariable: async (componentId, variableId, updates) => {
       const component = get().getComponentById(componentId);
@@ -1189,6 +1227,14 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
             };
           }
 
+          // Drop the variant-variable link if it points at the deleted variable.
+          // The layer's own `componentVariantId` (set when the user picked a
+          // variant manually) is preserved as the local fallback.
+          if (updatedLayer.componentVariantVariableId === variableId) {
+            const { componentVariantVariableId: _, ...rest } = updatedLayer;
+            updatedLayer = rest;
+          }
+
           updatedLayer = removeVariableLinksPointingTo(updatedLayer, variableId);
 
           // Recursively process children
@@ -1280,6 +1326,14 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
               }
 
               updatedLayer.componentOverrides = overrides;
+            }
+
+            // Mirror of the editor-side strip: drop dangling variant-variable
+            // links so a deleted variant variable doesn't keep pointing into a
+            // nonexistent parent variable.
+            if (updatedLayer.componentVariantVariableId === variableId) {
+              const { componentVariantVariableId: _, ...rest } = updatedLayer;
+              updatedLayer = rest;
             }
 
             updatedLayer = removeVariableLinksPointingTo(updatedLayer, variableId);

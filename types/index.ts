@@ -404,6 +404,11 @@ export interface Layer {
   // Selected variant id within the referenced component. When undefined or
   // pointing to a missing variant, the first variant ("Default") is used.
   componentVariantId?: string;
+  // When set, the variant for this nested component instance is driven by the
+  // parent component's variable (by id). Resolved during
+  // `applyComponentOverrides` and written back to `componentVariantId` before
+  // the component tree is expanded.
+  componentVariantVariableId?: string;
   componentOverrides?: {
     text?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (text)
     rich_text?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (rich text)
@@ -412,6 +417,7 @@ export interface Layer {
     audio?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (audio)
     video?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (video)
     icon?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (icon)
+    variant?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (variant)
     variableLinks?: Record<string, string>; // childVariableId → parentVariableId (pass-through from nested component to parent)
   };
 
@@ -608,7 +614,7 @@ export interface BlockTemplate {
 export interface ComponentVariable {
   id: string;        // Unique variable ID
   name: string;      // Display name (e.g., "Button title")
-  type?: 'text' | 'rich_text' | 'image' | 'link' | 'audio' | 'video' | 'icon'; // Variable type (defaults to 'text' for backwards compatibility)
+  type?: 'text' | 'rich_text' | 'image' | 'link' | 'audio' | 'video' | 'icon' | 'variant'; // Variable type (defaults to 'text' for backwards compatibility)
   placeholder?: string; // Placeholder text shown in text override inputs
   default_value?: ComponentVariableValue; // Default value
 }
@@ -1245,8 +1251,17 @@ export interface IconSettingsValue {
   src?: AssetVariable | StaticTextVariable;
 }
 
-// Component variable value type (text, image, link, audio, video, and icon variables)
-export type ComponentVariableValue = DynamicTextVariable | DynamicRichTextVariable | ImageSettingsValue | LinkSettingsValue | AudioSettingsValue | VideoSettingsValue | IconSettingsValue;
+// Variant settings value for component variables. Stored on
+// `componentOverrides.variant[<variableId>]` and as `default_value` on a
+// `'variant'`-typed ComponentVariable. The variant_id is matched against the
+// referenced nested component's variants at resolve time; a missing match
+// silently falls back to the layer's own `componentVariantId`.
+export interface VariantSettingsValue {
+  variant_id: string;
+}
+
+// Component variable value type (text, image, link, audio, video, icon, and variant variables)
+export type ComponentVariableValue = DynamicTextVariable | DynamicRichTextVariable | ImageSettingsValue | LinkSettingsValue | AudioSettingsValue | VideoSettingsValue | IconSettingsValue | VariantSettingsValue;
 
 // Pagination Layer Definition (partial Layer for styling pagination controls)
 export interface PaginationLayerConfig {

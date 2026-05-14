@@ -4,7 +4,7 @@
  * Applies component variable overrides during resolution
  */
 
-import type { Layer, Component, ComponentVariable, ComponentVariableValue, LayerVariables } from '@/types';
+import type { Layer, Component, ComponentVariable, ComponentVariableValue, LayerVariables, VariantSettingsValue } from '@/types';
 import { getComponentVariantLayers } from './component-variant-utils';
 
 /**
@@ -258,6 +258,7 @@ const OVERRIDE_CATEGORIES: OverrideCategory[] = [
   'audio',
   'video',
   'icon',
+  'variant',
 ];
 
 function findOverrideByVariableId(
@@ -329,6 +330,23 @@ export function applyComponentOverrides(
 ): Layer[] {
   return layers.map(layer => {
     let updatedLayer = { ...layer };
+
+    // If this nested-component instance has its variant choice driven by a
+    // parent component variable, resolve the variant id from the parent's
+    // override (or the variable's default) and stamp it on `componentVariantId`
+    // before `resolveComponents` reads it. The parent variable is generic — it
+    // doesn't carry a target component id — so the variant id might not exist
+    // on this layer's referenced component; in that case
+    // `getComponentVariantLayers` falls back to the first variant.
+    if (layer.componentVariantVariableId) {
+      const variableId = layer.componentVariantVariableId;
+      const variableDef = componentVariables?.find(v => v.id === variableId);
+      const overrideValue = overrides?.variant?.[variableId];
+      const value = (overrideValue ?? variableDef?.default_value) as VariantSettingsValue | undefined;
+      if (value && typeof value === 'object' && 'variant_id' in value && value.variant_id) {
+        updatedLayer = { ...updatedLayer, componentVariantId: value.variant_id };
+      }
+    }
 
     // Check if this layer has a text variable linked
     const linkedTextVariableId = layer.variables?.text?.id;
