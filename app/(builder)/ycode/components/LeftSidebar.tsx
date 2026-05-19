@@ -89,7 +89,6 @@ const LeftSidebar = React.memo(function LeftSidebar({
   const activeTab = storeSidebarTab || sidebarTab;
 
   const componentDrafts = useComponentsStore((state) => state.componentDrafts);
-  const getComponentById = useComponentsStore((state) => state.getComponentById);
   const updateComponentDraft = useComponentsStore((state) => state.updateComponentDraft);
   const addVariant = useComponentsStore((state) => state.addVariant);
   const renameVariant = useComponentsStore((state) => state.renameVariant);
@@ -104,8 +103,11 @@ const LeftSidebar = React.memo(function LeftSidebar({
   const layerLocksRef = useRef(layerLocks);
   layerLocksRef.current = layerLocks;
 
-  // Get component layers if in edit mode
-  const editingComponent = editingComponentId ? getComponentById(editingComponentId) : null;
+  // Subscribe to the actual component object so optimistic updates (e.g.
+  // variant rename) trigger a re-render immediately.
+  const editingComponent = useComponentsStore((state) =>
+    editingComponentId ? state.components.find(c => c.id === editingComponentId) ?? null : null
+  );
 
   // Listen for keyboard shortcut to toggle ElementLibrary
   useEffect(() => {
