@@ -74,6 +74,7 @@ import { useLocalisationStore } from '@/stores/useLocalisationStore';
 import { useMigrationStore } from '@/stores/useMigrationStore';
 import { useVersionsStore } from '@/stores/useVersionsStore';
 import { useRole } from '@/hooks/use-role';
+import { useImportPaste } from '@/hooks/use-import-paste';
 // Collaboration temporarily disabled
 // import { useCollaborationPresenceStore } from '@/stores/useCollaborationPresenceStore';
 
@@ -195,6 +196,9 @@ export default function YCodeBuilder({ children }: YCodeBuilderProps = {} as YCo
   const previousIsEditingRef = useRef<boolean | undefined>(undefined);
 
   // Collaboration hooks - enable realtime sync for layers and pages
+  // Intercept Webflow (and, in future, Figma) clipboard pastes for import.
+  useImportPaste();
+
   const liveLayerUpdates = useLiveLayerUpdates(currentPageId);
   // useLivePageUpdates initializes page sync subscriptions by being called
   const _livePageUpdates = useLivePageUpdates();
