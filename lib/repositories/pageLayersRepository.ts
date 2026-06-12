@@ -726,3 +726,78 @@ export async function findAffectedPages(
 
   return result;
 }
+
+/**
+ * Find collections whose PUBLISHED rich-text field values embed any of the
+ * given (changed) components.
+ *
+ * Components placed inside a CMS Rich Text *field* are stored as
+ * `richTextComponent` nodes inside `collection_item_values.value` — NOT in
+ * `page_layers`. As a result `findAffectedPages` (which only scans page_layers
+ * and pages.settings) can't see them, so editing such a component would never
+ * invalidate the pages that render those CMS items. Callers map the returned
+ * collection IDs back to affected pages via `findAffectedPages([], [], ids)`.
+ *
+ * Component IDs are expanded through nested components first, so editing a
+ * component nested inside another component that is itself embedded in a CMS
+ * rich-text value still flags the collection.
+ */
+export async function findCollectionsEmbeddingComponents(
+  componentIds: string[],
+): Promise<string[]> {
+  if (componentIds.length === 0) return [];
+
+  const client = await getSupabaseAdmin();
+  if (!client) return [];
+
+  // Only rich-text fields can contain embedded `richTextComponent` nodes, so
+  // restrict the value scan to those fields. A field keeps the same `id`
+  // across its draft/published rows (composite PK `id,is_published`), so the
+  // published field id matches `collection_item_values.field_id` on published
+  // values, and the field carries its own `collection_id` — no item lookup
+  // needed to map a match back to a collection.
+  const { data: richTextFields } = await client
+    .from('collection_fields')
+    .select('id, collection_id')
+    .eq('type', 'rich_text')
+    .eq('is_published', true)
+    .is('deleted_at', null);
+
+  if (!richTextFields || richTextFields.length === 0) return [];
+
+  const fieldToCollection = new Map<string, string>();
+  for (const f of richTextFields) {
+    fieldToCollection.set(f.id as string, f.collection_id as string);
+  }
+  const fieldIds = Array.from(fieldToCollection.keys());
+
+  const expanded = await expandThroughComponents(client, componentIds, []);
+  const allComponentIds = [...new Set([...componentIds, ...expanded])];
+
+  const { chunk } = await import('@/lib/utils');
+  const collectionIds = new Set<string>();
+
+  // Scan published rich-text values only. The cheap `richTextComponent` marker
+  // check skips values that hold no embedded component before the id match.
+  for (const idChunk of chunk(fieldIds, 500)) {
+    const { data: values } = await client
+      .from('collection_item_values')
+      .select('field_id, value')
+      .eq('is_published', true)
+      .is('deleted_at', null)
+      .in('field_id', idChunk);
+
+    for (const row of values ?? []) {
+      if (!row.value) continue;
+      const collectionId = fieldToCollection.get(row.field_id as string);
+      if (!collectionId || collectionIds.has(collectionId)) continue;
+      const text = typeof row.value === 'string' ? row.value : JSON.stringify(row.value);
+      if (!text.includes('richTextComponent')) continue;
+      for (const id of allComponentIds) {
+        if (text.includes(id)) { collectionIds.add(collectionId); break; }
+      }
+    }
+  }
+
+  return Array.from(collectionIds);
+}

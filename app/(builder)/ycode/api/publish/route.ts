@@ -13,7 +13,7 @@ import {
   getAllPublishedRoutes,
   invalidateForLocalisationChanges,
 } from '@/lib/services/cacheService';
-import { findAffectedPages } from '@/lib/repositories/pageLayersRepository';
+import { findAffectedPages, findCollectionsEmbeddingComponents } from '@/lib/repositories/pageLayersRepository';
 import { dispatchSitePublishedEvent } from '@/lib/services/webhookService';
 import { getAllDraftPages, hardDeleteSoftDeletedPages, backfillMissingPageHashes } from '@/lib/repositories/pageRepository';
 import { publishComponents, getUnpublishedComponents, hardDeleteSoftDeletedComponents } from '@/lib/repositories/componentRepository';
@@ -621,7 +621,26 @@ export async function POST(request: NextRequest) {
 
       // Find pages indirectly affected by changed components, styles, collections
       // Single scan of draft page_layers instead of one scan per resource type
-      const activeCollectionIds = publishedCollectionIds;
+      //
+      // Components embedded inside a CMS Rich Text *field* live in
+      // collection_item_values, not page_layers, so the page_layers scan can't
+      // see them. Map changed components → collections whose published rich-text
+      // values embed them, and fold those collections into the collection scan
+      // so the CMS pages rendering those items get invalidated.
+      let componentEmbeddingCollectionIds: string[] = [];
+      if (changedComponentIds.length > 0) {
+        try {
+          componentEmbeddingCollectionIds = await findCollectionsEmbeddingComponents(changedComponentIds);
+          if (componentEmbeddingCollectionIds.length > 0) {
+            console.log(`[Cache] components embedded in ${componentEmbeddingCollectionIds.length} collection(s) via CMS rich-text fields`);
+          }
+        } catch (err) {
+          // Non-fatal: degrade to full invalidation so stale CMS pages still refresh
+          console.warn('[Cache] CMS rich-text component scan failed, escalating:', err instanceof Error ? err.message : err);
+          globalChanged = true;
+        }
+      }
+      const activeCollectionIds = [...new Set([...publishedCollectionIds, ...componentEmbeddingCollectionIds])];
 
       let indirectlyAffectedPageIds: string[] = [];
       let cssAffectedPageIds: string[] = [];

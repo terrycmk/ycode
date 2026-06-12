@@ -18,6 +18,7 @@ import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
 import { TAILWIND_CUSTOM_VARIANTS } from '@/lib/tailwind-custom-variants';
 import { getAllDraftLayers, getDraftLayers } from '@/lib/repositories/pageLayersRepository';
 import { getAllComponents } from '@/lib/repositories/componentRepository';
+import { collectComponentIds } from '@/lib/component-utils';
 import { setSetting } from '@/lib/repositories/settingsRepository';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 
@@ -204,38 +205,48 @@ export async function generateCSSForPages(pageIds: string[]): Promise<number> {
  * Collect a page's layers plus the layers of any components it references.
  * This ensures the per-page CSS includes all classes needed to render
  * component instances on that page.
+ *
+ * Component references are discovered via `collectComponentIds`, which finds
+ * both direct instances (`layer.componentId`) AND components embedded inside
+ * rich-text content (`richTextComponent` nodes in `variables.text.data.content`)
+ * and component override text values. Without the rich-text discovery, a
+ * component used only inside a Rich Text block would be missing from the
+ * page's per-page CSS — its (changed) classes would never compile, so a style
+ * update on that component wouldn't render on the published page.
+ *
+ * Expansion is iterative (BFS) so transitively nested components — and
+ * components embedded in rich text at any depth — are all included.
  */
 function collectLayersWithComponents(pageLayers: Layer[], components: Component[]): Layer[] {
   const result: Layer[] = [...pageLayers];
   const componentMap = new Map(components.map(c => [c.id, c]));
   const visitedComponentIds = new Set<string>();
 
-  function findComponentRefs(layers: Layer[]) {
-    for (const layer of layers) {
-      if (layer.componentId && !visitedComponentIds.has(layer.componentId)) {
-        visitedComponentIds.add(layer.componentId);
-        const component = componentMap.get(layer.componentId);
-        if (component) {
-          if (component.variants && component.variants.length > 0) {
-            for (const variant of component.variants) {
-              result.push(...(variant.layers ?? []));
-            }
-            for (const variant of component.variants) {
-              findComponentRefs(variant.layers ?? []);
-            }
-          } else if (component.layers) {
-            result.push(...component.layers);
-            findComponentRefs(component.layers);
-          }
-        }
-      }
-      if (layer.children) {
-        findComponentRefs(layer.children);
+  const layerGroupsForComponent = (component: Component): Layer[][] => {
+    if (component.variants && component.variants.length > 0) {
+      return component.variants.map(v => v.layers ?? []);
+    }
+    return component.layers ? [component.layers] : [];
+  };
+
+  // BFS over layer trees: each pass collects every component id referenced
+  // within the current trees (direct + rich-text-embedded), then queues the
+  // referenced components' own layers for the next pass.
+  const frontier: Layer[][] = [pageLayers];
+  while (frontier.length > 0) {
+    const layers = frontier.shift()!;
+    for (const id of collectComponentIds(layers)) {
+      if (visitedComponentIds.has(id)) continue;
+      visitedComponentIds.add(id);
+      const component = componentMap.get(id);
+      if (!component) continue;
+      for (const group of layerGroupsForComponent(component)) {
+        result.push(...group);
+        frontier.push(group);
       }
     }
   }
 
-  findComponentRefs(pageLayers);
   return result;
 }
 
