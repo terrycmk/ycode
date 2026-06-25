@@ -72,6 +72,7 @@ export interface SizingDesign {
   overflow?: string;
   aspectRatio?: string | null;
   objectFit?: string | null;
+  objectPosition?: string | null;
   gridColumnSpan?: string | null;
   gridRowSpan?: string | null;
 }
